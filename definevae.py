@@ -219,24 +219,7 @@ def definevae(lat_dim = 60,
          var_name = v.name
          if 'NORM' in var_name: norm_vars.append(v)
          elif 'VAE' in var_name: vae_vars.append(v)
-        
-     # ==============================================================================     
-     # start session
-     # ==============================================================================
-     sess = tf.InteractiveSession()
-     sess.run(tf.global_variables_initializer())
-     print("Initialized parameters")
-     saver = tf.train.Saver(var_list = vae_vars)
-     
-     # ==============================================================================
-     # do post-training predictions
-     # ==============================================================================     
-     modelpath = '/usr/bmicnas01/data-biwi-01/nkarani/projects/domain_shift_unsupervised/code/v2.0/'
-     modelpath = modelpath + 'trainedmodel/cvae_MSJhalf_40chunks_fcl' + str(fcl_dim)
-     modelpath = modelpath +  '_lat' + str(lat_dim) + '_ns' + str(noisy) + '_ps' + str(patchsize) + '_step' + str(500000)
-     saver.restore(sess, modelpath)
-     print("Loaded the new model, trained patchwise on the 40 chunk dataset.")
-         
+                 
      # ==============================================================================
      # gradient stuff, gd recon etc...
      # ==============================================================================
@@ -306,11 +289,12 @@ def definevae(lat_dim = 60,
           y_out_prec = tf.contrib.layers.flatten(y_out_prec_)
           
      # reshape x_normalized to match other flattened shapes
-     x_normalized_ = tf.reshape(x_normalized, [nsampl, ndims*ndims])    
+     x_normalized_flattened = tf.reshape(x_normalized, [nsampl, ndims*ndims])    
      
-     # ==============================================================================     
+     # ============================================================================== 
+     # VAE needs to reconstruct only x_normalized
      # ==============================================================================          
-     op_p_x_z = (- 0.5 * tf.reduce_sum(tf.multiply(tf.pow((y_out - x_normalized_),2), y_out_prec), axis=1) \
+     op_p_x_z = (- 0.5 * tf.reduce_sum(tf.multiply(tf.pow((y_out - x_normalized_flattened),2), y_out_prec), axis=1) \
                  + 0.5 * tf.reduce_sum(tf.log(y_out_prec), axis=1) - 0.5 * ndims * ndims * tf.log(2*np.pi) ) 
           
      op_q_z_x = (- 0.5 * tf.reduce_sum(tf.multiply(tf.pow((z - mu), 2), tf.reciprocal(std)), axis=1) \
@@ -326,6 +310,10 @@ def definevae(lat_dim = 60,
      
      funop = op_p_x_z + op_p_z - op_q_z_x
      
+     # ==============================================================================          
+     # the gradients are still computed wrt x_rec (the input to the normalization module).
+     # these gradients are used to update the x_rec, in order to increase its ELBO.
+     # ==============================================================================          
      grd = tf.gradients(op_p_x_z + op_p_z - op_q_z_x, x_rec) # 
      grd_p_x_z0 = tf.gradients(op_p_x_z, x_rec)[0]
      grd_p_z0 = tf.gradients(op_p_z, x_rec)[0]
@@ -333,17 +321,32 @@ def definevae(lat_dim = 60,
      grd_q_zpl_x_az0 = tf.gradients(op_q_zpl_x, z_pl)[0]
      grd2 = tf.gradients(grd[0], x_rec)
      
+     grd0 = grd[0]
+     grd20 = grd2[0]
+
+     # ============================================================================== 
+     # create an optimizer for the normalization nodule. This also tried to increase the ELBO of the normalized image
+     # ============================================================================== 
      optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3) 
      normalization_op = optimizer.minimize(funop, var_list = norm_vars)
      
-     print("KCT-INFO: the gradients: ")
-     print(grd_p_x_z0)
-     print(grd_p_z0)
-     print(grd_q_z_x0)
+     # ==============================================================================     
+     # start session
+     # ==============================================================================
+     sess = tf.InteractiveSession()
+     sess.run(tf.global_variables_initializer())
+     print("Initialized parameters")
+     saver = tf.train.Saver(var_list = vae_vars)
      
-     grd0 = grd[0]
-     grd20 = grd2[0]
-                                                           
+     # ==============================================================================
+     # do post-training predictions
+     # ==============================================================================     
+     modelpath = '/usr/bmicnas01/data-biwi-01/nkarani/projects/domain_shift_unsupervised/code/v2.0/'
+     modelpath = modelpath + 'trainedmodel/cvae_MSJhalf_40chunks_fcl' + str(fcl_dim)
+     modelpath = modelpath +  '_lat' + str(lat_dim) + '_ns' + str(noisy) + '_ps' + str(patchsize) + '_step' + str(500000)
+     saver.restore(sess, modelpath)
+     print("Loaded the new model, trained patchwise on the 40 chunk dataset.")
+                                                                     
      return (x_rec,
              x_inp,
              funop,
