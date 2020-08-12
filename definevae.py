@@ -305,8 +305,8 @@ def definevae(lat_dim = 60,
           y_out_prec_ = tf.exp(y_out_prec_log)
           y_out_prec = tf.contrib.layers.flatten(y_out_prec_)
           
-      # reshape x_normalized to match other flattened shapes
-      x_normalized_ = tf.reshape(x_normalized, [nsampl, ndims*ndims])    
+     # reshape x_normalized to match other flattened shapes
+     x_normalized_ = tf.reshape(x_normalized, [nsampl, ndims*ndims])    
      
      # ==============================================================================     
      # ==============================================================================          
