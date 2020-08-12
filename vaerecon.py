@@ -21,7 +21,9 @@ import scipy.optimize as sop
 import SimpleITK as sitk
 import utils
 import pickle
-     
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')     
+
 ## direk precision optimize etmek daha da iyi olabilir. 
 def vaerecon(us_ksp_r2, # undersampled k space
              sensmaps,
@@ -44,10 +46,12 @@ def vaerecon(us_ksp_r2, # undersampled k space
              chunks40 = False,
              Melmodels = '',
              N4BFcorr = False,
-             z_multip = 1.0):
+             z_multip = 1.0,
+             n1 = 5,
+             n2 = 5):
      
-     print('xxxxxxxxxxxxxxxxxxx contRec is ' + contRec)
-     print('xxxxxxxxxxxxxxxxxxx parfact is ' + str(parfact) )
+     logging.info('xxxxxxxxxxxxxxxxxxx contRec is ' + contRec)
+     logging.info('xxxxxxxxxxxxxxxxxxx parfact is ' + str(parfact) )
      
      # ==============================================================================
      # set parameters
@@ -74,12 +78,16 @@ def vaerecon(us_ksp_r2, # undersampled k space
                              mode = mode,
                              chunks40 = chunks40,
                              Melmodels = Melmodels)
-
+     
      x_rec, x_inp, funop, grd0, sess = vae_outputs[0:5]
-     grd_p_x_z0, grd_p_z0, grd_q_z_x0, grd20 = vae_outputs[5:9]
-     y_out, y_out_prec, z_std_multip, op_q_z_x = vae_outputs[9:13]
-     mu, std, grd_q_zpl_x_az0, op_q_zpl_x, z_pl, z = vae_outputs[13:19]
-
+     grd_p_x_z0, grd_p_z0, grd_q_z_x0, grd20 = vae_outputs[5:9] # these are not being used in the code now.
+     y_out, y_out_prec, z_std_multip, op_q_z_x = vae_outputs[9:13] # these are not being used in the code now.
+     mu, std = vae_outputs[13:15] # these are not being used in the code now.
+     grd_q_zpl_x_az0, op_q_zpl_x, z_pl = vae_outputs[15:18] # these are not being used in the code now.
+     z = vae_outputs[18:19] # these are not being used in the code now.
+     # Most of these outputs were being used in the function likelihood_grad_meth3, which is no longer being used.
+     normalization_op = vae_outputs[19:20]
+     
      # =================================
      # used to go from image to patches and back
      # =================================
@@ -90,7 +98,7 @@ def vaerecon(us_ksp_r2, # undersampled k space
                      contatedges = True)
      
      nopatches = len(Ptchr.genpatchsizes)
-     print("There will be in total " + str(nopatches) + " patches.")
+     logging.info("There will be in total " + str(nopatches) + " patches.")
      
      # =================================
      # functions for data consistency
@@ -103,34 +111,47 @@ def vaerecon(us_ksp_r2, # undersampled k space
      def dconst_grad(us):
           #inp: [nx, ny]
           #out: [nx, ny]
-          return 2 * utils.tUFT_with_sensmaps(utils.UFT_with_sensmaps(us, uspat, sensmaps) - data, uspat)
+          return 2 * utils.tUFT_with_sensmaps(utils.UFT_with_sensmaps(us, uspat, sensmaps) - data, uspat, sensmaps)
 
+     # =================================  
+     # function for running the normalization op on a batch of patches
+     # =================================  
+     def run_op_on_batch(op, im, sess):
+         
+          ptchs = Ptchr.im2patches(np.reshape(im, [imsizer, imrizec]))
+          ptchs = np.array(ptchs)          
+          ptchs = np.abs(ptchs)
+          
+          random_indices = np.random.permutation(ptchs.shape[0])
+          batch_indices = np.sort(random_indices[0:parfact])          
+          random_batch_of_patches = np.reshape(ptchs[batch_indices,:,:], [parfact,-1])
+          
+          sess.run(op, feed_dict = {x_rec: np.tile(random_batch_of_patches, (nsampl, 1)), z_std_multip: z_multip})
+          
+          return 0     
+     
      # =================================
      # functions for computing the ELBO and its derivatives
      # =================================     
      def likelihood(us):
-          #inp: [parfact,ps*ps]
-          #out: parfact
-          us=np.abs(us)
-          funeval = funop.eval(feed_dict={x_rec: np.tile(us,(nsampl,1)), z_std_multip: z_multip}) # ,x_inp: np.tile(us,(nsampl,1))
-          #funeval: [500x1]
-          funeval=np.array(np.split(funeval, nsampl, axis=0)) # [nsampl x parfact x 1]
-          return np.mean(funeval,axis=0).astype(np.float64)
+          # inp: [parfact,ps*ps]
+          # out: parfact
+          us = np.abs(us)
+          funeval = funop.eval(feed_dict={x_rec: np.tile(us, (nsampl,1)), z_std_multip: z_multip})
+          # funeval: [500x1]
+          funeval = np.array(np.split(funeval, nsampl, axis=0)) # [nsampl x parfact x 1]
+          return np.mean(funeval, axis=0).astype(np.float64)
      
      def likelihood_grad(us):
-          #inp: [parfact, ps*ps]
-          #out: [parfact, ps*ps]
-          usc=us.copy()
-          usabs=np.abs(us)
-          
-          grd0eval = grd0.eval(feed_dict={x_rec: np.tile(usabs,(nsampl,1)), z_std_multip: z_multip}) # ,x_inp: np.tile(usabs,(nsampl,1))
-          # grd0eval: [500x784]
-          grd0eval=np.array(np.split(grd0eval,nsampl,axis=0))# [nsampl x parfact x 784]
-          grd0m=np.mean(grd0eval,axis=0) #[parfact,784]
-          
+          # inp: [parfact, ps*ps]
+          # out: [parfact, ps*ps]
+          usc = us.copy()
+          usabs = np.abs(us)
+          grd0eval = grd0.eval(feed_dict = {x_rec: np.tile(usabs, (nsampl, 1)), z_std_multip: z_multip}) # grd0eval: [500x784]
+          grd0eval = np.array(np.split(grd0eval, nsampl, axis=0)) # [nsampl x parfact x 784]
+          grd0m = np.mean(grd0eval,axis=0) # [parfact,784]
           # correction for the complex image
           grd0m = usc/np.abs(usc)*grd0m
-
           return grd0m #.astype(np.float64)
           
      def likelihood_grad_patches(ptchs):
@@ -144,27 +165,26 @@ def vaerecon(us_ksp_r2, # undersampled k space
           grds = np.zeros([int(np.ceil(ptchs.shape[0]/parfact)*parfact), np.prod(ptchs.shape[1:])], dtype=np.complex64)
           
           # extra indices that have to be padded to ensure we have complete batches for the VAE
-          extraind = int(np.ceil(ptchs.shape[0]/parfact)*parfact) - ptchs.shape[0]
-          ptchs = np.pad(ptchs,( (0,extraind),(0,0)  ), mode='edge' )
+          extraind = int(np.ceil(ptchs.shape[0] / parfact) * parfact) - ptchs.shape[0]
+          ptchs = np.pad(ptchs, ((0, extraind), (0,0)), mode='edge')
           
-          for ix in range(int(np.ceil(ptchs.shape[0]/parfact))):
-              grds[parfact*ix:parfact*ix+parfact,:] = likelihood_grad(ptchs[parfact*ix:parfact*ix+parfact,:]) 
-                  
+          for ix in range(int(np.ceil(ptchs.shape[0] / parfact))):
+              grds[parfact*ix : parfact*ix+parfact, :] = likelihood_grad(ptchs[parfact*ix : parfact*ix+parfact, :]) 
+
           grds = grds[0:shape_orig[0],:]
 
           return np.reshape(grds, shape_orig)
      
      def likelihood_patches(ptchs):
-          #inp: [np, ps, ps] 
-          #out: 1
+          # inp: [np, ps, ps] 
+          # out: 1
           
-          fvls = np.zeros([int(np.ceil(ptchs.shape[0]/parfact)*parfact) ])
-          
-          extraind = int(np.ceil(ptchs.shape[0]/parfact)*parfact) - ptchs.shape[0]
+          fvls = np.zeros([int(np.ceil(ptchs.shape[0] / parfact) * parfact) ])
+          extraind = int(np.ceil(ptchs.shape[0] / parfact) * parfact) - ptchs.shape[0]
           ptchs = np.pad(ptchs, [(0,extraind), (0,0), (0,0)], mode='edge')
           
           for ix in range(int(np.ceil(ptchs.shape[0]/parfact))):
-               fvls[parfact*ix:parfact*ix+parfact] = likelihood(np.reshape(ptchs[parfact*ix:parfact*ix+parfact,:,:], [parfact,-1]))
+               fvls[parfact*ix : parfact*ix+parfact] = likelihood(np.reshape(ptchs[parfact*ix : parfact*ix+parfact,:,:], [parfact,-1]))
                
           fvls = fvls[0:ptchs.shape[0]]
                
@@ -181,7 +201,7 @@ def vaerecon(us_ksp_r2, # undersampled k space
           
           # convert image to patches
           ptchs = Ptchr.im2patches(np.reshape(image, [imsizer,imrizec]))
-          ptchs=np.array(ptchs)          
+          ptchs = np.array(ptchs)          
           
           # compute gradient of the ELBO wrt each patch
           grd_lik = likelihood_grad_patches(ptchs)
@@ -284,11 +304,10 @@ def vaerecon(us_ksp_r2, # undersampled k space
               regval = reg2eval(ims[:,:,ix+1].flatten())
               f_dc = dconst(magim*np.exp(1j*ims[:,:,ix+1])*bfestim)
               
-              print("norm grad reg: " + str(np.linalg.norm(grd_reg)))
-              print("norm grad dc: " + str(np.linalg.norm(grd_dc)) )
-              
-              print("regval: " + str(regval))
-              print("fdc: (*1e9) {0:.6f}".format(f_dc/1e9))
+              logging.info("norm grad reg: " + str(np.linalg.norm(grd_reg)))
+              logging.info("norm grad dc: " + str(np.linalg.norm(grd_dc)))
+              logging.info("regval: " + str(regval))
+              logging.info("fdc: (*1e9) {0:.6f}".format(f_dc/1e9))
           
           return ims[:,:,-1] #-np.pi    
      
@@ -317,15 +336,15 @@ def vaerecon(us_ksp_r2, # undersampled k space
           ims = np.zeros((imsizer, imrizec, niter))
           ims[:,:,0] = usph.copy()
           regval = reg2eval(ims[:,:,0].flatten())
-          print(regval)
+          logging.info(regval)
           for ix in range(niter-1):               
               currgrd = reg2grd(ims[:,:,ix].flatten())     
-              res = sop.minimize_scalar(lambda alpha: reg2eval(ims[:,:,ix].flatten() + alpha * currgrd   ), method='Golden'    )
+              res = sop.minimize_scalar(lambda alpha: reg2eval(ims[:,:,ix].flatten() + alpha * currgrd   ), method='Golden')
               alphaopt = res.x
-              print("optimal alpha: " + str(alphaopt) )               
+              logging.info("optimal alpha: " + str(alphaopt) )               
               ims[:,:,ix+1] = ims[:,:,ix] + alphaopt*currgrd.reshape([252,308])
               regval = reg2eval(ims[:,:,ix+1].flatten())
-              print("regval: " + str(regval))             
+              logging.info("regval: " + str(regval))             
           return ims[:,:,-1]-np.pi 
 
      def N4corrf(im):
@@ -352,16 +371,18 @@ def vaerecon(us_ksp_r2, # undersampled k space
      trpat = np.zeros_like(uspat)
      trpat[:, 120:136] = 1
           
-     print(uspat)
+     logging.info(uspat)
      
      # ===================================== 
-     # make the functions for POCS
+     # initialize counters
      # ===================================== 
-     numiter=num_iter
+     numiter = num_iter
      multip = 0 #0.1
-     alphas = stepsize*np.ones(numiter) # np.logspace(-4,-4,numiter)                 
-     # alphas=np.ones_like(np.logspace(-4,-4,numiter))*5e-3                                   
+     alphas = stepsize*np.ones(numiter) # np.logspace(-4,-4,numiter)
      
+     # ===================================== 
+     # functions for POCS
+     # ===================================== 
      def feval(im):
           return full_funceval(im)
      
@@ -391,18 +412,18 @@ def vaerecon(us_ksp_r2, # undersampled k space
      # If the optimization is to be continued from a previous run,
      # load the final image from the previous optimization as the first image for the current optimization.
      # =====================================
-     print('contRec is ' + contRec)
+     logging.info('contRec is ' + contRec)
      if contRec != '':
           try:
-               print('KCT-INFO: reading from a previous pickle file ' + contRec)
+               logging.info('Reading from a previous pickle file ' + contRec)
                rr = pickle.load(open(contRec, 'rb'))
                recs[:, 0] = rr[:, -1]
-               print('KCT-INFO: initialized to the previous recon from pickle: ' + contRec)
+               logging.info('Initialized to the previous recon from pickle: ' + contRec)
           except:
-               print('KCT-INFO: reading from a previous numpy file ' + contRec)
+               logging.info('Reading from a previous numpy file ' + contRec)
                rr = np.load(contRec)
                recs[:, 0] = rr[:, -1]
-               print('KCT-INFO: initialized to the previous recon from numpy: ' + contRec)
+               logging.info('Initialized to the previous recon from numpy: ' + contRec)
      
      # =====================================
      # main loop
@@ -414,12 +435,33 @@ def vaerecon(us_ksp_r2, # undersampled k space
      for it in range(0, numiter-1, 13):         
         
           alpha = alphas[it]
-     
+          
           # ===============================================
-          # first do N times magnitude prior iterations
+          # first do N times magnitude prior iterations wrt normalization module
           # ===============================================      
           recstmp = recs[:, it].copy()          
-          for ix in range(10):
+          for ix in range(n1):
+          
+               run_op_on_batch(normalization_op, recstmp, sess)
+               
+               ftot, f_lik, f_dc = feval(recstmp)
+          
+               if N4BFcorr:
+                    f_dc = dconst(recstmp.reshape([imsizer, imrizec]) * n4bf)
+               
+               gtot, g_lik, g_dc = geval(recstmp) # gradient evaluation: total, wrt_vae, wrt_data_consistency
+               
+               logging.info("iteration number: " + str(it+ix))
+               logging.info("f_tot= " + str(ftot) + " f_lik= " + str(f_lik) + " f_dc (1e6)= " + str(f_dc/1e6))
+               logging.info("|g_lik|= " + str(np.linalg.norm(g_lik)) + " |g_dc|= " + str(np.linalg.norm(g_dc)) )
+
+               recs[:, it+ix+1] = recstmp.copy()
+               
+          # ===============================================
+          # first do N times magnitude prior iterations wrt the image itself
+          # ===============================================      
+          recstmp = recs[:, it + n1].copy()          
+          for ix in range(n2):
           
                ftot, f_lik, f_dc = feval(recstmp)
           
@@ -428,27 +470,27 @@ def vaerecon(us_ksp_r2, # undersampled k space
                
                gtot, g_lik, g_dc = geval(recstmp) # gradient evaluation : total, wrt_vae, wrt_data_consistency
                
-               print("it no: " + str(it+ix))
-               print("f_tot= " + str(ftot) + " f_lik= " + str(f_lik) + " f_dc (1e6)= " + str(f_dc/1e6))
-               print("|g_lik|= " + str(np.linalg.norm(g_lik)) + " |g_dc|= " + str(np.linalg.norm(g_dc)) )
+               logging.info("iteration number: " + str(it+ix))
+               logging.info("f_tot= " + str(ftot) + " f_lik= " + str(f_lik) + " f_dc (1e6)= " + str(f_dc/1e6))
+               logging.info("|g_lik|= " + str(np.linalg.norm(g_lik)) + " |g_dc|= " + str(np.linalg.norm(g_dc)) )
                
                recstmp = recstmp - alpha * g_lik # g_lik
-               recs[:, it+ix+1] = recstmp.copy()
-
+               recs[:, it + ix + n1 + 1] = recstmp.copy()
+     
           # =============================================== 
           # Now do a  DC projection.... ACTUALLY, skip the DC projection for now.
           # ===============================================
-          recs[:, it+11] = recs[:, it+10] 
+          recs[:, it + n1 + n2 + 1] = recs[:, it + n1 + n2] 
            
           # ===============================================
           # now do a phase projection
           # ===============================================
-          tmpa = np.abs(np.reshape(recs[:,it+11], [imsizer,imrizec]))
-          tmpp = np.angle(np.reshape(recs[:,it+11], [imsizer,imrizec]))
+          tmpa = np.abs(np.reshape(recs[:, it + n1 + n2 + 1], [imsizer, imrizec]))
+          tmpp = np.angle(np.reshape(recs[:, it + n1 + n2 + 1], [imsizer, imrizec]))
           tmpatv = tmpa.copy().flatten()
            
           if reglmb == 0:
-               print("skipping phase proj")
+               logging.info("skipping phase proj")
                tmpptv = tmpp.copy().flatten()
                
           else:
@@ -459,7 +501,7 @@ def vaerecon(us_ksp_r2, # undersampled k space
                     tmpptv = reg2_proj(tmpp, alpha=reglmb, niter=100).flatten() # 0.1, 15
                     regval = reg2eval(tmpp)
                     phaseregvals.append(regval)
-                    print("KCT-dbg: phase reg value is " + str(regval))
+                    logging.info("KCT-dbg: phase reg value is " + str(regval))
                 
                elif regtype == 'reg2_dc': # Tikhonov, with additional constraint from data consistency
                     tmpptv = reg2_dcproj(tmpp, tmpa, n4bf, alpha_reg=reglmb, alpha_dc=reglmb, niter=100).flatten()
@@ -471,32 +513,32 @@ def vaerecon(us_ksp_r2, # undersampled k space
                     tmpptv = reg2_proj_ls(tmpp, niter=regiter).flatten() #0.1, 15
                     regval = reg2eval(tmpp)
                     phaseregvals.append(regval)
-                    print("KCT-dbg: phase reg value is " + str(regval))
+                    logging.info("KCT-dbg: phase reg value is " + str(regval))
                 
                else:
-                    print("hey mistake!!!!!!!!!!")
+                    logging.info("hey mistake!!!!!!!!!!")
            
           # recombine magnitude and updated phase.
-          recs[:, it+12] = tmpatv*np.exp(1j*tmpptv)
+          recs[:, it + n1 + n2 + 2] = tmpatv*np.exp(1j*tmpptv)
 
           # ===============================================      
           # now do a data consistency projection
           # take the measured part of the k space from the measured data and the remaining part of the k space from the updated image.
           # ===============================================
           if not N4BFcorr:  
-               tmp1 = utils.UFT_with_sensmaps(np.reshape(recs[:,it+12],[imsizer,imrizec]), (1-uspat), sensmaps)
-               tmp2 = utils.UFT_with_sensmaps(np.reshape(recs[:,it+12],[imsizer,imrizec]), (uspat), sensmaps)
-               tmp3 = data*uspat[:,:,np.newaxis]
+               tmp1 = utils.UFT_with_sensmaps(np.reshape(recs[:, it + n1 + n2 + 2], [imsizer,imrizec]), (1-uspat), sensmaps)
+               tmp2 = utils.UFT_with_sensmaps(np.reshape(recs[:, it + n1 + n2 + 2], [imsizer,imrizec]), (uspat), sensmaps)
+               tmp3 = data * uspat[:,:,np.newaxis]
                
                tmp = tmp1 + multip*tmp2 + (1-multip)*tmp3
-               recs[:, it+13] = utils.tFT_with_sensmaps(tmp, sensmaps).flatten()
+               recs[:, it + n1 + n2 + 3] = utils.tFT_with_sensmaps(tmp, sensmaps).flatten()
                
-               ftot, f_lik, f_dc = feval(recs[:, it+1])
-               print('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc/np.linalg.norm(data)**2))
+               ftot, f_lik, f_dc = feval(recs[:, it + n1 + n2 + 3])
+               logging.info('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc/np.linalg.norm(data)**2))
                
           elif N4BFcorr:               
                n4bf_prev = n4bf.copy()
-               imgtmp = np.reshape(recs[:,it+12],[imsizer,imrizec]) # biasfree
+               imgtmp = np.reshape(recs[:, it + n1 + n2 + 2], [imsizer,imrizec]) # biasfree
                imgtmp_bf = imgtmp*n4bf_prev # img with bf
                
                n4bf, N4bf_image = N4corrf(imgtmp_bf) # correct the bf, this correction is supposed to be better now.
@@ -508,13 +550,13 @@ def vaerecon(us_ksp_r2, # undersampled k space
                tmp1 = utils.UFT_with_sensmaps(imgtmp_new, (1-uspat), sensmaps)
                tmp3 = data * uspat[:,:,np.newaxis]
                tmp = tmp1 + (1-multip) * tmp3 # multip=0 by default
-               recs[:, it+13] = (utils.tFT_with_sensmaps(tmp, sensmaps)/n4bf).flatten()
+               recs[:, it + n1 + n2 + 3] = (utils.tFT_with_sensmaps(tmp, sensmaps)/n4bf).flatten()
                
-               ftot, f_lik, f_dc = feval(recs[:,it+13])
+               ftot, f_lik, f_dc = feval(recs[:, it + n1 + n2 + 3])
 
                if N4BFcorr:
-                     f_dc = dconst(recs[:, it+13].reshape([imsizer,imrizec])*n4bf)
+                     f_dc = dconst(recs[:, it + n1 + n2 + 3].reshape([imsizer,imrizec])*n4bf)
                
-               print('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc/np.linalg.norm(data)**2))
+               logging.info('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc/np.linalg.norm(data)**2))
               
      return recs, 0, phaseregvals, n4biasfields

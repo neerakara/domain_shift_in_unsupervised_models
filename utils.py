@@ -1,4 +1,7 @@
 import numpy as np
+import matplotlib
+matplotlib.use('agg')
+import matplotlib.pyplot as plt 
 
 # ==================================
 # fourier transform functions
@@ -72,3 +75,22 @@ def tUFT_with_sensmaps(x, uspat, sensmaps):
      #out: [nx, ny]
      tmp1 = np.tile(uspat[:,:,np.newaxis], [1, 1, sensmaps.shape[2]])
      return tFT_with_sensmaps(tmp1*x, sensmaps)
+ 
+# ==========================================================
+# ==========================================================       
+def save_recon_results(rec,
+                       savepath):
+    
+    num_images = rec.shape[-1] - 20
+    ids = np.arange(0, num_images, num_images//5)
+    nc = len(ids)
+    nr = 1
+            
+    plt.figure(figsize=[5*nc, 5*nr])
+    for c in range(nc): 
+        plt.subplot(nr, nc, c + 1); plt.imshow(np.rot90(rec[:,:,ids[c]], k=1), cmap='gray')
+        plt.clim([0,1.1])
+        plt.colorbar()
+        plt.title('iteration' + str(ids[c]))        
+    plt.savefig(savepath, bbox_inches='tight')
+    plt.close()

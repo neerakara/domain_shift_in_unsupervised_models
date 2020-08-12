@@ -8,6 +8,7 @@ import utils
 from US_pattern import US_pattern
 from MR_image_data import MR_image_data
 import argparse
+import os
 
 parser = argparse.ArgumentParser(prog='PROG')
 parser.add_argument('--vol', type=int, default=5)
@@ -17,7 +18,14 @@ parser.add_argument('--contrun', type=int, default=0)
 parser.add_argument('--skiprecon', type=int, default=0) 
 args=parser.parse_args()
 
-basefolder = '/usr/bmicnas01/data-biwi-01/nkarani/projects/domain_shift_unsupervised/data/'
+# =============================
+# make results directory if it does not exist
+# =============================     
+basefolder = '/usr/bmicnas01/data-biwi-01/nkarani/projects/domain_shift_unsupervised/'
+results_folder = basefolder + 'code/v2.0/results/hcp/subject' + str(args.vol)
+if not os.path.exists(results_folder):
+    os.makedirs(results_folder)
+
 ndims = 28
 lat_dim = 60
 mode = 'MRIunproc' # 'Melanie_BFC'
@@ -33,7 +41,7 @@ USp = US_pattern()
 # ==================================
 noise = 0
 # DS = Dataset(-1, -1, ndims, noise, 1, mode)
-MRi = MR_image_data(dirname = basefolder,
+MRi = MR_image_data(dirname = basefolder + 'data/',
                     imgSize = [260, 311, 260],
                     testchunks = [39],
                     noiseinvstd = noise)
@@ -88,12 +96,12 @@ orim = orima.copy()
 # undersampling pattern. either load or generate.
 # ======================================
 try:
-     uspat = np.load(basefolder + 'uspats/uspat_us' + str(R) + '_vol' + str(vol) + '_sli' + str(sli) + '.npy')
+     uspat = np.load(basefolder + 'data/uspats/uspat_us' + str(R) + '_vol' + str(vol) + '_sli' + str(sli) + '.npy')
      print("Read from existing u.s. pattern file")
 except:
      USp = US_pattern()
      uspat = USp.generate_opt_US_pattern_1D(orim.shape, R=R, max_iter=100, no_of_training_profs=15)
-     np.save(basefolder + 'uspats/uspat_us' + str(R) + '_vol' + str(vol) + '_sli' + str(sli), uspat)
+     np.save(basefolder + 'data/uspats/uspat_us' + str(R) + '_vol' + str(vol) + '_sli' + str(sli), uspat)
 
 # ======================================
 # apply undersampled FT on the image, this returns the undersampled k space.
@@ -109,6 +117,9 @@ regtype = 'reg2_dc'
 reg = 0.1
 dcprojiter = 10
 chunks40 = True
+n1 = 5 # number of updates of the normalization module
+n2 = 5 # number of updates of the image
+recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reg) + '_n1_' + str(n1) +  '_n2_' + str(n2) 
 
 # =============================
 # set number of iterations
@@ -117,36 +128,43 @@ if R<=3:
      num_iter = 102 # 402 # 302
 else:
      num_iter = 102 # 602 # 602
-     
+
 # =============================
 # if continue run...
 # =============================
 if args.contrun == 0:
-     contRec = ''
+     continue_recon = ''
 else:
-     contRec = basefolder + 'MAPestimation/rec_us' + str(R) + '_vol' + str(vol) + '_sli' + str(sli)
-     contRec = contRec +  '_regtype_' + regtype + '_dcprojiter_' + str(dcprojiter)
+     continue_recon = results_folder + recon_suffix
      numiter = 302
      
 # =============================
 # do the reconstruction
 # =============================
-if not args.skiprecon:
-     rec_vae = vaerecon.vaerecon(usksp, # undersampled k space
-                                 sensmaps = np.ones_like(usksp), # coil sensitivity map
-                                 dcprojiter = dcprojiter,
-                                 lat_dim = lat_dim,
-                                 patchsize = ndims,
-                                 contRec = contRec,
-                                 parfact = 25,
-                                 num_iter = num_iter,
-                                 regiter = 10,
-                                 reglmb = reg,
-                                 regtype = regtype,
-                                 half = True,
-                                 mode = mode,
-                                 chunks40 = chunks40)
-     rec_vae = rec_vae[0]
-     pickle.dump(rec_vae, open(basefolder+'MAPestimation/rec'+str(args.contrun)+'_us'+str(R)+'_vol'+str(vol)+'_sli'+str(sli)+'_regtype_'+regtype+'_dcprojiter_'+str(dcprojiter) ,'wb'))
-     lastiter = int((np.floor(rec_vae.shape[1]/13)-2)*13)
-     maprecon = rec_vae[:, lastiter].reshape([252, 308]) # this is the final reconstructed image
+rec_vae = vaerecon.vaerecon(usksp, # undersampled k space
+                            sensmaps = np.ones_like(usksp), # coil sensitivity map
+                            dcprojiter = dcprojiter,
+                            lat_dim = lat_dim,
+                            patchsize = ndims,
+                            contRec = continue_recon,
+                            parfact = 25,
+                            num_iter = num_iter,
+                            regiter = 10,
+                            reglmb = reg,
+                            regtype = regtype,
+                            half = True,
+                            mode = mode,
+                            chunks40 = chunks40,
+                            n1 = n1,
+                            n2 = n2)
+
+# =============================   
+# write results to disk
+# =============================   
+pickle.dump(rec_vae[0], open(results_folder + recon_suffix, 'wb'))
+
+# =============================   
+# This will be the final reconstructed image
+# =============================   
+lastiter = int((np.floor(rec_vae.shape[1] / 13) - 2) * 13)
+maprecon = rec_vae[:, lastiter].reshape([252, 308]) # this is the final reconstructed image
