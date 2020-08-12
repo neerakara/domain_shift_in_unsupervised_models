@@ -451,10 +451,12 @@ def vaerecon(us_ksp_r2, # undersampled k space
                
                gtot, g_lik, g_dc = geval(recstmp) # gradient evaluation: total, wrt_vae, wrt_data_consistency
                
+               logging.info("updating normalization module...")
                logging.info("iteration number: " + str(it+ix))
                logging.info("f_tot= " + str(ftot) + " f_lik= " + str(f_lik) + " f_dc (1e6)= " + str(f_dc/1e6))
                logging.info("|g_lik|= " + str(np.linalg.norm(g_lik)) + " |g_dc|= " + str(np.linalg.norm(g_dc)) )
 
+               # recstmp will not change in this loop. Only the normalization module will.
                recs[:, it+ix+1] = recstmp.copy()
                
           # ===============================================
@@ -470,10 +472,12 @@ def vaerecon(us_ksp_r2, # undersampled k space
                
                gtot, g_lik, g_dc = geval(recstmp) # gradient evaluation : total, wrt_vae, wrt_data_consistency
                
-               logging.info("iteration number: " + str(it+ix))
+               logging.info("updating image...")
+               logging.info("iteration number: " + str(it+n1+ix))
                logging.info("f_tot= " + str(ftot) + " f_lik= " + str(f_lik) + " f_dc (1e6)= " + str(f_dc/1e6))
                logging.info("|g_lik|= " + str(np.linalg.norm(g_lik)) + " |g_dc|= " + str(np.linalg.norm(g_dc)) )
-               
+     
+               # recstmp will change in this loop. The normalization module will stay fixed.          
                recstmp = recstmp - alpha * g_lik # g_lik
                recs[:, it + ix + n1 + 1] = recstmp.copy()
      
