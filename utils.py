@@ -47,8 +47,11 @@ def tUFT(x, uspat, normalize=False):
 
 # ======================
 # ======================
-def calc_rmse(rec, imorig):
+def calc_rmse_percentage(rec, imorig):
      return 100 * np.sqrt(np.sum(np.square(np.abs(rec) - np.abs(imorig))) / np.sum(np.square(np.abs(imorig))))
+ 
+def calc_rmse(rec, imorig):
+     return np.sqrt(np.sum(np.square(np.abs(rec) - np.abs(imorig))))
 
 # ======================
 # FT functions with sensmaps
@@ -79,18 +82,28 @@ def tUFT_with_sensmaps(x, uspat, sensmaps):
 # ==========================================================
 # ==========================================================       
 def save_recon_results(rec,
+                       orig,
                        savepath):
     
-    num_images = rec.shape[-1] - 20
-    ids = np.arange(0, num_images, num_images//5)
+    num_images = rec.shape[-1]
+    ids = np.arange(0, num_images, num_images // 8)
     nc = len(ids)
-    nr = 1
+    nr = 3
             
     plt.figure(figsize=[5*nc, 5*nr])
     for c in range(nc): 
-        plt.subplot(nr, nc, c + 1); plt.imshow(np.rot90(rec[:,:,ids[c]], k=1), cmap='gray')
-        plt.clim([0,1.1])
-        plt.colorbar()
-        plt.title('iteration' + str(ids[c]))        
+        
+        r = np.rot90(rec[:,:,ids[c]], k=1)
+        o = np.rot90(orig, k=1)
+        e = r-o
+        
+        rmse_percent = np.round(calc_rmse_percentage(r,o), 3)
+        rmse = np.round(calc_rmse(r,o), 3)
+        error_str = 'rmse: ' + str(rmse) + ', ' + str(rmse_percent) + '%'
+        
+        plt.subplot(nr, nc, nc*0 + c + 1); plt.imshow(r, cmap='gray'); plt.clim([0,1.1]); plt.colorbar(); plt.title('iteration' + str(ids[c]))        
+        plt.subplot(nr, nc, nc*1 + c + 1); plt.imshow(o, cmap='gray'); plt.clim([0,1.1]); plt.colorbar(); plt.title('orig')
+        plt.subplot(nr, nc, nc*2 + c + 1); plt.imshow(e, cmap='gray'); plt.clim([-1.0,1.0]); plt.colorbar(); plt.title('error, ' + error_str)
+        
     plt.savefig(savepath, bbox_inches='tight')
     plt.close()

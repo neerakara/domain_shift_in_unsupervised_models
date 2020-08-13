@@ -10,7 +10,7 @@ import os
 parser = argparse.ArgumentParser(prog = 'PROG')
 parser.add_argument('--sli', type = int, default = 3) 
 parser.add_argument('--base', default = "sess_02_07_2018/CK/")
-parser.add_argument('--usfact', type = float, default = 2) 
+parser.add_argument('--usfact', type = float, default = 3) 
 parser.add_argument('--contrun', type = int, default = 0) 
 args=parser.parse_args()
 
@@ -76,16 +76,16 @@ except:
           
 usksp = dd*np.tile(uspat[:,:,np.newaxis], [1, 1, dd.shape[2]])
 
-num_iter = 102
+num_iter = 302
 regtype = 'reg2'
 reg = 0 # no phase regulization!
 dcprojiter = 10
 onlydciter = 10 # do first iterations only SENSE reconstruction
 chunks40 = True
 mode = 'MRIunproc'
-n1 = 0 # number of updates of the normalization module
-n2 = 10 # number of updates of the image
-recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reg) + '_n1_' + str(n1) +  '_n2_' + str(n2) 
+n1 = 5 # number of updates of the normalization module
+n2 = 5 # number of updates of the image
+recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reg) + '_n1_' + str(n1) +  '_n2_' + str(n2) + '_accum_grads_norm_k_1_seed100'
   
 # =============================
 # do the reconstruction
@@ -112,4 +112,3 @@ rec_vae = vaerecon.vaerecon(usksp,
 # write results to disk
 # =============================   
 pickle.dump(rec_vae[0], open(results_folder + recon_suffix, 'wb'))
-

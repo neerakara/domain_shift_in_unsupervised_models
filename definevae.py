@@ -58,12 +58,13 @@ def definevae(lat_dim = 60,
      # define normalization module here
      # ======================================
      with tf.variable_scope("NORM") as scope:
+          norm_k = 1
           # ======================================
           # define weights
           # ======================================
-          norm_conv1_weights = tf.get_variable("norm_conv1_weights", [3, 3, num_inp_channels, 32], initializer=intl)          
-          norm_conv2_weights = tf.get_variable("norm_conv2_weights", [3, 3, 32, 32], initializer=intl)          
-          norm_conv3_weights = tf.get_variable("norm_conv3_weights", [3, 3, 32, num_inp_channels], initializer=intl)
+          norm_conv1_weights = tf.get_variable("norm_conv1_weights", [norm_k, norm_k, num_inp_channels, 32], initializer=intl)          
+          norm_conv2_weights = tf.get_variable("norm_conv2_weights", [norm_k, norm_k, 32, 32], initializer=intl)          
+          norm_conv3_weights = tf.get_variable("norm_conv3_weights", [norm_k, norm_k, 32, num_inp_channels], initializer=intl)
           
      x_inp_ = tf.reshape(x_inp, [batch_size, ndims, ndims, 1])     
      norm_conv1 = fact(tf.nn.conv2d(x_inp_, norm_conv1_weights, strides=[1, 1, 1, 1], padding='SAME'))     
@@ -223,8 +224,8 @@ def definevae(lat_dim = 60,
      # ==============================================================================
      # gradient stuff, gd recon etc...
      # ==============================================================================
-     nsampl = batchsize #361*2 # 1428#1071#714#714 1785#
-     x_rec = tf.get_variable('x_rec', shape = [nsampl, ndims*ndims], initializer = tf.constant_initializer(value=0.0))     
+     nsampl = batchsize # 361*2 # 1428 # 1071 # 714 # 714 1785#
+     x_rec = tf.get_variable('x_rec', shape = [nsampl, ndims*ndims], initializer = tf.constant_initializer(value=0.0)) 
      z_std_multip = tf.placeholder_with_default(1.0, shape=[])
      
      # ==============================================================================
@@ -325,10 +326,42 @@ def definevae(lat_dim = 60,
      grd20 = grd2[0]
 
      # ============================================================================== 
-     # create an optimizer for the normalization nodule. This also tried to increase the ELBO of the normalized image
+     # create an optimizer for the normalization nodule. This also tries to increase the ELBO of the normalized image,
+     # but not by changing the image itself, but by changing the parameters of the normalization module.
      # ============================================================================== 
-     optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3) 
-     normalization_op = optimizer.minimize(funop, var_list = norm_vars)
+     # optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3) 
+     # normalization_op = optimizer.minimize(funop, var_list = norm_vars)
+     
+     # create an instance of the required optimizer
+     optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3)
+        
+     # initialize variable holding the accumlated gradients and create a zero-initialisation op
+     normalizer_accumulated_gradients = [tf.Variable(tf.zeros_like(var.initialized_value()), trainable=False) for var in norm_vars]
+        
+     # op to set the accumulated gradients to 0
+     normalizer_accumulated_gradients_zero_op = [ac.assign(tf.zeros_like(ac)) for ac in normalizer_accumulated_gradients]
+
+     # calculate gradients and define accumulation op
+     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+     with tf.control_dependencies(update_ops):
+         gradients = optimizer.compute_gradients(funop, var_list = norm_vars) # compute_gradients return a list of (gradient, variable) pairs.
+     normalizer_accumulate_gradients_op = [ac.assign_add(gg[0]) for ac, gg in zip(normalizer_accumulated_gradients, gradients)]
+
+     # define the gradient mean op
+     num_accumulation_steps_pl = tf.placeholder(dtype=tf.float32, name = 'num_accumulation_steps')
+     normalizer_accumulated_gradients_mean_op = [ag.assign(tf.divide(ag, num_accumulation_steps_pl)) for ag in normalizer_accumulated_gradients]
+
+     # reassemble the gradients in the [value, var] format and do define train op
+     final_gradients = [(ag, gg[1]) for ag, gg in zip(normalizer_accumulated_gradients, gradients)]
+     normalizer_update_op = optimizer.apply_gradients(final_gradients)
+     
+     # ================================================================
+     # sequence of running optimization ops:
+     # 1. at the start of each epoch, run normalizer_accumulated_gradients_zero_op (no need to provide values for any placeholders)
+     # 2. in each training iteration, run normalizer_accumulate_gradients_op with regular feed dict of inputs and outputs
+     # 3. at the end of the epoch (after all batches of the volume have been passed), run normalizer_accumulated_gradients_mean_op, with a value for the placeholder num_accumulation_steps_pl
+     # 4. finally, run the normalizer_update_op. this also requires input output placeholders, as compute_gradients will be called again, but the returned gradient values will be replaced by the mean gradients.
+     # ================================================================
      
      # ==============================================================================     
      # start session
@@ -366,4 +399,9 @@ def definevae(lat_dim = 60,
              op_q_zpl_x,
              z_pl,
              z,
-             normalization_op)
+             normalizer_accumulated_gradients_zero_op,
+             normalizer_accumulate_gradients_op,
+             normalizer_accumulated_gradients_mean_op,
+             num_accumulation_steps_pl,
+             normalizer_update_op,
+             x_normalized)
