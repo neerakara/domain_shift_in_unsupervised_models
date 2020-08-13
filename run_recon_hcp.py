@@ -16,6 +16,9 @@ parser.add_argument('--sli', type=int, default=150)
 parser.add_argument('--usfact', type=float, default=4) # undersampling factor 
 parser.add_argument('--contrun', type=int, default=0) 
 parser.add_argument('--skiprecon', type=int, default=0) 
+parser.add_argument('--num_iter', type = int, default = 202) 
+parser.add_argument('--n1', type = int, default = 5) 
+parser.add_argument('--n2', type = int, default = 5) 
 args=parser.parse_args()
 
 # =============================
@@ -40,7 +43,6 @@ USp = US_pattern()
 # there are 40 chunks in total, the 39th chunk is used for testing.
 # ==================================
 noise = 0
-# DS = Dataset(-1, -1, ndims, noise, 1, mode)
 MRi = MR_image_data(dirname = basefolder + 'data/',
                     imgSize = [260, 311, 260],
                     testchunks = [39],
@@ -117,17 +119,9 @@ regtype = 'reg2_dc'
 reg = 0.1
 dcprojiter = 10
 chunks40 = True
-n1 = 5 # number of updates of the normalization module
-n2 = 5 # number of updates of the image
+n1 = args.n1 # number of updates of the normalization module
+n2 = args.n2 # number of updates of the image
 recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reg) + '_n1_' + str(n1) +  '_n2_' + str(n2) 
-
-# =============================
-# set number of iterations
-# =============================
-if R<=3:
-     num_iter = 102 # 402 # 302
-else:
-     num_iter = 102 # 602 # 602
 
 # =============================
 # if continue run...
@@ -148,7 +142,7 @@ rec_vae = vaerecon.vaerecon(usksp, # undersampled k space
                             patchsize = ndims,
                             contRec = continue_recon,
                             parfact = 25,
-                            num_iter = num_iter,
+                            num_iter = args.num_iter,
                             regiter = 10,
                             reglmb = reg,
                             regtype = regtype,

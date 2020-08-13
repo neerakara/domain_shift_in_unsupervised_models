@@ -11,17 +11,15 @@ basefolder = '/usr/bmicnas01/data-biwi-01/nkarani/projects/domain_shift_unsuperv
 dataset = 'in_house'
 
 if dataset == 'in_house':    
-    imgsizex = 237
-    imgsizey = 256
     reglambda = 0
     regtype = 'reg2'
     dcprojiter = 10
     
-    subject = 'sess_02_07_2018/CK/'
+    subject = 'NK/'
     R = 3
     sli = 3 
-    n1 = 1 # number of updates of the normalization module
-    n2 = 9 # number of updates of the image
+    n1 = 5 # number of updates of the normalization module
+    n2 = 5 # number of updates of the image
     
     # read original image
     dirbase = basefolder + 'data/the_h5_files/' + subject
@@ -54,8 +52,6 @@ if dataset == 'in_house':
     orig_image = np.abs(dd)
     
 elif dataset == 'hcp':
-    imgsizex = 252
-    imgsizey = 308
     reglambda = 0.1
     regtype = 'reg2_dc'
     dcprojiter = 10
@@ -85,9 +81,9 @@ recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reg
 rec = pickle.load(open(results_folder + recon_suffix, 'rb'))
 
 # save figure
-rec1 = np.reshape(rec, [imgsizex, imgsizey, rec.shape[-1]])
+rec1 = np.reshape(rec, [orig_image.shape[0], orig_image.shape[1], rec.shape[-1]])
 lastiter = int((np.floor(rec1.shape[-1] / 13) - 2) * 13)
 rec1 = rec1[:, :, :lastiter]
 utils.save_recon_results(np.abs(rec1), 
                          orig_image,
-                         results_folder + recon_suffix + '.png')
+                         results_folder + recon_suffix + '.tiff')

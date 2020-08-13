@@ -97,8 +97,8 @@ def save_recon_results(rec,
         o = np.rot90(orig, k=1)
         e = r-o
         
-        rmse_percent = np.round(calc_rmse_percentage(r,o), 3)
-        rmse = np.round(calc_rmse(r,o), 3)
+        rmse_percent = np.round(calc_rmse_percentage(r*np.linalg.norm(o)/np.linalg.norm(r),o), 3)
+        rmse = np.round(calc_rmse(r*np.linalg.norm(o)/np.linalg.norm(r),o), 3)
         error_str = 'rmse: ' + str(rmse) + ', ' + str(rmse_percent) + '%'
         
         plt.subplot(nr, nc, nc*0 + c + 1); plt.imshow(r, cmap='gray'); plt.clim([0,1.1]); plt.colorbar(); plt.title('iteration' + str(ids[c]))        

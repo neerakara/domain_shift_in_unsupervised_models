@@ -10,7 +10,8 @@ def definevae(lat_dim = 60,
               half = False,
               mode = [],
               chunks40 = False,
-              Melmodels = False):
+              Melmodels = False,
+              use_normalizer = False):
                             
      if mode ==[]:
           mode = 'MRIunproc'
@@ -47,6 +48,7 @@ def definevae(lat_dim = 60,
      # define the input place holder
      # ======================================
      x_inp = tf.placeholder("float", shape = [None, input_dim])
+     x_inp_ = tf.reshape(x_inp, [batch_size, ndims, ndims, 1])
      nsampl = 50
      
      # ======================================
@@ -58,20 +60,23 @@ def definevae(lat_dim = 60,
      # define normalization module here
      # ======================================
      with tf.variable_scope("NORM") as scope:
-          norm_k = 1
-          # ======================================
-          # define weights
-          # ======================================
-          norm_conv1_weights = tf.get_variable("norm_conv1_weights", [norm_k, norm_k, num_inp_channels, 32], initializer=intl)          
-          norm_conv2_weights = tf.get_variable("norm_conv2_weights", [norm_k, norm_k, 32, 32], initializer=intl)          
-          norm_conv3_weights = tf.get_variable("norm_conv3_weights", [norm_k, norm_k, 32, num_inp_channels], initializer=intl)
-          
-     x_inp_ = tf.reshape(x_inp, [batch_size, ndims, ndims, 1])     
-     norm_conv1 = fact(tf.nn.conv2d(x_inp_, norm_conv1_weights, strides=[1, 1, 1, 1], padding='SAME'))     
-     norm_conv2 = fact(tf.nn.conv2d(norm_conv1, norm_conv2_weights, strides=[1, 1, 1, 1], padding='SAME'))
-     delta_x = fact(tf.nn.conv2d(norm_conv2, norm_conv3_weights, strides=[1, 1, 1, 1], padding='SAME'))
-     x_normalized = x_inp_ + delta_x
-     
+         norm_k = 1
+         # ======================================
+         # define weights
+         # ======================================
+         norm_conv1_weights = tf.get_variable("norm_conv1_weights", [norm_k, norm_k, num_inp_channels, 32], initializer=intl)          
+         norm_conv2_weights = tf.get_variable("norm_conv2_weights", [norm_k, norm_k, 32, 32], initializer=intl)          
+         norm_conv3_weights = tf.get_variable("norm_conv3_weights", [norm_k, norm_k, 32, num_inp_channels], initializer=intl)
+                   
+     if use_normalizer:     
+        norm_conv1 = fact(tf.nn.conv2d(x_inp_, norm_conv1_weights, strides = [1, 1, 1, 1], padding='SAME'))     
+        norm_conv2 = fact(tf.nn.conv2d(norm_conv1, norm_conv2_weights, strides = [1, 1, 1, 1], padding='SAME'))
+        delta_x = fact(tf.nn.conv2d(norm_conv2, norm_conv3_weights, strides = [1, 1, 1, 1], padding='SAME'))
+        x_normalized = x_inp_ + delta_x
+                
+     else:
+         x_normalized = x_inp_
+         
      # ======================================
      # define the network here
      # ======================================
@@ -81,16 +86,16 @@ def definevae(lat_dim = 60,
           # define weights
           # ======================================
           enc_conv1_weights = tf.get_variable("enc_conv1_weights", [3, 3, num_inp_channels, 32], initializer=intl)
-          enc_conv1_biases = tf.get_variable("enc_conv1_biases", shape=[32], initializer=tf.constant_initializer(value=0))
+          enc_conv1_biases = tf.get_variable("enc_conv1_biases", shape = [32], initializer=tf.constant_initializer(value=0))
           
           enc_conv2_weights = tf.get_variable("enc_conv2_weights", [3, 3, 32, 64], initializer=intl)
-          enc_conv2_biases = tf.get_variable("enc_conv2_biases", shape=[64], initializer=tf.constant_initializer(value=0))
+          enc_conv2_biases = tf.get_variable("enc_conv2_biases", shape = [64], initializer=tf.constant_initializer(value=0))
           
           enc_conv3_weights = tf.get_variable("enc_conv3_weights", [3, 3, 64, 64], initializer=intl)
-          enc_conv3_biases = tf.get_variable("enc_conv3_biases", shape=[64], initializer=tf.constant_initializer(value=0))
+          enc_conv3_biases = tf.get_variable("enc_conv3_biases", shape = [64], initializer=tf.constant_initializer(value=0))
               
-          mu_weights = tf.get_variable(name="mu_weights", shape=[int(input_dim*64), lat_dim], initializer=intl)
-          mu_biases = tf.get_variable("mu_biases", shape=[lat_dim], initializer=tf.constant_initializer(value=0))
+          mu_weights = tf.get_variable(name="mu_weights", shape = [int(input_dim*64), lat_dim], initializer=intl)
+          mu_biases = tf.get_variable("mu_biases", shape = [lat_dim], initializer=tf.constant_initializer(value=0))
          
           logVar_weights = tf.get_variable(name="logVar_weights", shape=[int(input_dim*64), lat_dim], initializer=intl)
           logVar_biases = tf.get_variable("logVar_biases", shape=[lat_dim], initializer=tf.constant_initializer(value=0))
@@ -120,8 +125,7 @@ def definevae(lat_dim = 60,
      # ======================================
      # A. make encoder layers
      # ======================================
-     # x_inp_ = tf.reshape(x_inp, [batch_size, ndims, ndims, 1])     
-     enc_conv1 = tf.nn.conv2d(x_normalized, enc_conv1_weights, strides=[1, 1, 1, 1], padding='SAME')
+     enc_conv1 = tf.nn.conv2d(x_normalized, enc_conv1_weights, strides=[1, 1, 1, 1], padding='SAME')         
      enc_relu1 = fact(tf.nn.bias_add(enc_conv1, enc_conv1_biases))     
      enc_conv2 = tf.nn.conv2d(enc_relu1, enc_conv2_weights, strides=[1, 1, 1, 1], padding='SAME')
      enc_relu2 = fact(tf.nn.bias_add(enc_conv2, enc_conv2_biases))     
@@ -234,11 +238,16 @@ def definevae(lat_dim = 60,
      # ==============================================================================     
      # rewire the graph input
      x_inp_ = tf.reshape(x_rec, [nsampl, ndims, ndims, 1])
-     norm_conv1 = fact(tf.nn.conv2d(x_inp_, norm_conv1_weights, strides=[1, 1, 1, 1], padding='SAME'))     
-     norm_conv2 = fact(tf.nn.conv2d(norm_conv1, norm_conv2_weights, strides=[1, 1, 1, 1], padding='SAME'))
-     delta_x = fact(tf.nn.conv2d(norm_conv2, norm_conv3_weights, strides=[1, 1, 1, 1], padding='SAME'))
-     x_normalized = x_inp_ + delta_x
      
+     if use_normalizer:     
+        norm_conv1 = fact(tf.nn.conv2d(x_inp_, norm_conv1_weights, strides=[1, 1, 1, 1], padding='SAME'))     
+        norm_conv2 = fact(tf.nn.conv2d(norm_conv1, norm_conv2_weights, strides=[1, 1, 1, 1], padding='SAME'))
+        delta_x = fact(tf.nn.conv2d(norm_conv2, norm_conv3_weights, strides=[1, 1, 1, 1], padding='SAME'))
+        x_normalized = x_inp_ + delta_x
+                
+     else:
+         x_normalized = x_inp_
+        
      enc_conv1 = tf.nn.conv2d(x_normalized, enc_conv1_weights, strides=[1, 1, 1, 1], padding='SAME')
      enc_relu1 = fact(tf.nn.bias_add(enc_conv1, enc_conv1_biases))
      enc_conv2 = tf.nn.conv2d(enc_relu1, enc_conv2_weights, strides=[1, 1, 1, 1], padding='SAME')
@@ -325,36 +334,44 @@ def definevae(lat_dim = 60,
      grd0 = grd[0]
      grd20 = grd2[0]
 
-     # ============================================================================== 
-     # create an optimizer for the normalization nodule. This also tries to increase the ELBO of the normalized image,
-     # but not by changing the image itself, but by changing the parameters of the normalization module.
-     # ============================================================================== 
-     # optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3) 
-     # normalization_op = optimizer.minimize(funop, var_list = norm_vars)
-     
-     # create an instance of the required optimizer
-     optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3)
-        
-     # initialize variable holding the accumlated gradients and create a zero-initialisation op
-     normalizer_accumulated_gradients = [tf.Variable(tf.zeros_like(var.initialized_value()), trainable=False) for var in norm_vars]
-        
-     # op to set the accumulated gradients to 0
-     normalizer_accumulated_gradients_zero_op = [ac.assign(tf.zeros_like(ac)) for ac in normalizer_accumulated_gradients]
-
-     # calculate gradients and define accumulation op
-     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-     with tf.control_dependencies(update_ops):
-         gradients = optimizer.compute_gradients(funop, var_list = norm_vars) # compute_gradients return a list of (gradient, variable) pairs.
-     normalizer_accumulate_gradients_op = [ac.assign_add(gg[0]) for ac, gg in zip(normalizer_accumulated_gradients, gradients)]
-
-     # define the gradient mean op
-     num_accumulation_steps_pl = tf.placeholder(dtype=tf.float32, name = 'num_accumulation_steps')
-     normalizer_accumulated_gradients_mean_op = [ag.assign(tf.divide(ag, num_accumulation_steps_pl)) for ag in normalizer_accumulated_gradients]
-
-     # reassemble the gradients in the [value, var] format and do define train op
-     final_gradients = [(ag, gg[1]) for ag, gg in zip(normalizer_accumulated_gradients, gradients)]
-     normalizer_update_op = optimizer.apply_gradients(final_gradients)
-     
+     if use_normalizer:
+         # ============================================================================== 
+         # create an optimizer for the normalization nodule. This also tries to increase the ELBO of the normalized image,
+         # but not by changing the image itself, but by changing the parameters of the normalization module.
+         # ============================================================================== 
+         # optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3) 
+         # normalization_op = optimizer.minimize(funop, var_list = norm_vars)
+         
+         # create an instance of the required optimizer
+         optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3)
+            
+         # initialize variable holding the accumlated gradients and create a zero-initialisation op
+         normalizer_accumulated_gradients = [tf.Variable(tf.zeros_like(var.initialized_value()), trainable=False) for var in norm_vars]
+            
+         # op to set the accumulated gradients to 0
+         normalizer_accumulated_gradients_zero_op = [ac.assign(tf.zeros_like(ac)) for ac in normalizer_accumulated_gradients]
+    
+         # calculate gradients and define accumulation op
+         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+         with tf.control_dependencies(update_ops):
+             gradients = optimizer.compute_gradients(funop, var_list = norm_vars) # compute_gradients return a list of (gradient, variable) pairs.
+         normalizer_accumulate_gradients_op = [ac.assign_add(gg[0]) for ac, gg in zip(normalizer_accumulated_gradients, gradients)]
+    
+         # define the gradient mean op
+         num_accumulation_steps_pl = tf.placeholder(dtype=tf.float32, name = 'num_accumulation_steps')
+         normalizer_accumulated_gradients_mean_op = [ag.assign(tf.divide(ag, num_accumulation_steps_pl)) for ag in normalizer_accumulated_gradients]
+    
+         # reassemble the gradients in the [value, var] format and do define train op
+         final_gradients = [(ag, gg[1]) for ag, gg in zip(normalizer_accumulated_gradients, gradients)]
+         normalizer_update_op = optimizer.apply_gradients(final_gradients)
+         
+     else:
+         normalizer_accumulated_gradients_zero_op = 0
+         normalizer_accumulate_gradients_op = 0
+         normalizer_accumulated_gradients_mean_op = 0
+         num_accumulation_steps_pl = 0
+         normalizer_update_op = 0         
+         
      # ================================================================
      # sequence of running optimization ops:
      # 1. at the start of each epoch, run normalizer_accumulated_gradients_zero_op (no need to provide values for any placeholders)

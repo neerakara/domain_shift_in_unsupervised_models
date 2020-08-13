@@ -56,7 +56,7 @@ def vaerecon(us_ksp_r2, # undersampled k space
      # ==============================================================================
      # set parameters
      # ==============================================================================
-     np.random.seed(seed = 100)     
+     np.random.seed(seed = 1)     
      imsizer = us_ksp_r2.shape[0] #252#256#252
      imrizec = us_ksp_r2.shape[1] #308#256#308
      nsampl = 50 #0
@@ -77,7 +77,8 @@ def vaerecon(us_ksp_r2, # undersampled k space
                              half = half,
                              mode = mode,
                              chunks40 = chunks40,
-                             Melmodels = Melmodels)
+                             Melmodels = Melmodels,
+                             use_normalizer = bool(n1>0))
      
      x_rec, x_inp, funop, grd0, sess = vae_outputs[0:5]
      grd_p_x_z0, grd_p_z0, grd_q_z_x0, grd20 = vae_outputs[5:9] # these are not being used in the code now.
