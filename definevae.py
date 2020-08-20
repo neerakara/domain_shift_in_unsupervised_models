@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import logging
  
 # ==================================================
 # ==================================================
@@ -11,7 +12,8 @@ def definevae(lat_dim = 60,
               mode = [],
               chunks40 = False,
               Melmodels = False,
-              use_normalizer = False):
+              use_normalizer = False,
+              log_dir = ''):
                             
      if mode ==[]:
           mode = 'MRIunproc'
@@ -69,6 +71,7 @@ def definevae(lat_dim = 60,
          norm_conv3_weights = tf.get_variable("norm_conv3_weights", [norm_k, norm_k, 32, num_inp_channels], initializer=intl)
                    
      if use_normalizer:     
+        logging.info('defining normalizer module...')
         norm_conv1 = fact(tf.nn.conv2d(x_inp_, norm_conv1_weights, strides = [1, 1, 1, 1], padding='SAME'))     
         norm_conv2 = fact(tf.nn.conv2d(norm_conv1, norm_conv2_weights, strides = [1, 1, 1, 1], padding='SAME'))
         delta_x = fact(tf.nn.conv2d(norm_conv2, norm_conv3_weights, strides = [1, 1, 1, 1], padding='SAME'))
@@ -80,8 +83,7 @@ def definevae(lat_dim = 60,
      # ======================================
      # define the network here
      # ======================================
-     with tf.variable_scope("VAE") as scope:
-          
+     with tf.variable_scope("VAE") as scope:          
           # ======================================
           # define weights
           # ======================================
@@ -240,6 +242,7 @@ def definevae(lat_dim = 60,
      x_inp_ = tf.reshape(x_rec, [nsampl, ndims, ndims, 1])
      
      if use_normalizer:     
+        logging.info('defining normalizer module...')
         norm_conv1 = fact(tf.nn.conv2d(x_inp_, norm_conv1_weights, strides=[1, 1, 1, 1], padding='SAME'))     
         norm_conv2 = fact(tf.nn.conv2d(norm_conv1, norm_conv2_weights, strides=[1, 1, 1, 1], padding='SAME'))
         delta_x = fact(tf.nn.conv2d(norm_conv2, norm_conv3_weights, strides=[1, 1, 1, 1], padding='SAME'))
@@ -335,12 +338,13 @@ def definevae(lat_dim = 60,
      grd20 = grd2[0]
 
      if use_normalizer:
+         logging.info('defining normalizer module...')
          # ============================================================================== 
          # create an optimizer for the normalization nodule. This also tries to increase the ELBO of the normalized image,
          # but not by changing the image itself, but by changing the parameters of the normalization module.
          # ============================================================================== 
          # optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3) 
-         # normalization_op = optimizer.minimize(funop, var_list = norm_vars)
+         # normalization_op = optimizer.minimize(-funop, var_list = norm_vars)
          
          # create an instance of the required optimizer
          optimizer = tf.train.AdamOptimizer(learning_rate = 1e-3)
@@ -354,7 +358,7 @@ def definevae(lat_dim = 60,
          # calculate gradients and define accumulation op
          update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
          with tf.control_dependencies(update_ops):
-             gradients = optimizer.compute_gradients(funop, var_list = norm_vars) # compute_gradients return a list of (gradient, variable) pairs.
+             gradients = optimizer.compute_gradients(-funop, var_list = norm_vars) # compute_gradients return a list of (gradient, variable) pairs.
          normalizer_accumulate_gradients_op = [ac.assign_add(gg[0]) for ac, gg in zip(normalizer_accumulated_gradients, gradients)]
     
          # define the gradient mean op
@@ -389,7 +393,28 @@ def definevae(lat_dim = 60,
      saver = tf.train.Saver(var_list = vae_vars)
      
      # ==============================================================================
-     # do post-training predictions
+     # define placeholders for different summaries
+     # ==============================================================================
+     f_elbo = tf.placeholder(tf.float32, shape=[], name='f_elbo')
+     f_elbo_summary = tf.summary.scalar('f/elbo', f_elbo)
+     f_data_consistency = tf.placeholder(tf.float32, shape=[], name='f_data_consistency')
+     f_data_consistency_summary = tf.summary.scalar('f/data_consistency', f_data_consistency)
+     f_total = tf.placeholder(tf.float32, shape=[], name='f_total')
+     f_total_summary = tf.summary.scalar('f/total', f_total)
+     f_summary = tf.summary.merge([f_elbo_summary, f_data_consistency_summary, f_total_summary])
+     
+     g_elbo = tf.placeholder(tf.float32, shape=[], name='g_elbo')
+     g_elbo_summary = tf.summary.scalar('g/elbo', g_elbo)
+     g_data_consistency = tf.placeholder(tf.float32, shape=[], name='g_data_consistency')
+     g_data_consistency_summary = tf.summary.scalar('g/data_consistency', g_data_consistency)
+     g_total = tf.placeholder(tf.float32, shape=[], name='g_total')
+     g_total_summary = tf.summary.scalar('g/total', g_total)
+     g_summary = tf.summary.merge([g_elbo_summary, g_data_consistency_summary, g_total_summary])
+     
+     summary_writer = tf.summary.FileWriter(log_dir, sess.graph)
+     
+     # ==============================================================================
+     # restore the trained vae model
      # ==============================================================================     
      modelpath = '/usr/bmicnas01/data-biwi-01/nkarani/projects/domain_shift_unsupervised/code/v2.0/'
      modelpath = modelpath + 'trainedmodel/cvae_MSJhalf_40chunks_fcl' + str(fcl_dim)
@@ -421,4 +446,13 @@ def definevae(lat_dim = 60,
              normalizer_accumulated_gradients_mean_op,
              num_accumulation_steps_pl,
              normalizer_update_op,
-             x_normalized)
+             x_normalized,
+             f_elbo,
+             f_data_consistency,
+             f_total,
+             f_summary,
+             g_elbo,
+             g_data_consistency,
+             g_total,
+             g_summary,
+             summary_writer)

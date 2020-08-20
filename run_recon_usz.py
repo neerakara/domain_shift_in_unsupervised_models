@@ -99,7 +99,7 @@ chunks40 = True
 mode = 'MRIunproc'
 n1 = args.n1 # number of updates of the normalization module
 n2 = args.n2 # number of updates of the image
-recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reg) + '_n1_' + str(n1) +  '_n2_' + str(n2)
+results_folder = results_folder + 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reg) + '_n1_' + str(n1) +  '_n2_' + str(n2) + '/'
   
 # =============================
 # do the reconstruction
@@ -120,9 +120,10 @@ rec_vae = vaerecon.vaerecon(usksp,
                             mode = mode,
                             chunks40 = chunks40,
                             n1 = n1,
-                            n2 = n2)
+                            n2 = n2,
+                            log_dir = results_folder)
 
 # =============================   
 # write results to disk
 # =============================   
-pickle.dump(rec_vae[0], open(results_folder + recon_suffix, 'wb'))
+pickle.dump(rec_vae[0], open(results_folder + 'results', 'wb'))

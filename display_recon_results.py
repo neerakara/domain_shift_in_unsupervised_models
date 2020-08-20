@@ -2,13 +2,13 @@ import pickle
 import numpy as np
 import utils
 import h5py
-import MR_image_data
+from MR_image_data import MR_image_data
 
 # basefolder
 basefolder = '/usr/bmicnas01/data-biwi-01/nkarani/projects/domain_shift_unsupervised/'
 
 # parameters
-dataset = 'in_house'
+dataset = 'hcp'
 
 if dataset == 'in_house':    
     reglambda = 0
@@ -56,10 +56,13 @@ elif dataset == 'hcp':
     regtype = 'reg2_dc'
     dcprojiter = 10
 
-    R = 4    
+    R = 3    
     vol = 5
     sli = 150 
-    subject = 'subject' + str(vol) + '/'
+    n1 = 1 # number of updates of the normalization module
+    n2 = 9 # number of updates of the image
+    gamma = 1.0
+    subject = 'simulated_contrast_gamma_' + str(gamma) + '/subject' + str(vol) + '/'
 
     # read original image    
     MRi = MR_image_data(dirname = basefolder + 'data/',
@@ -74,10 +77,17 @@ elif dataset == 'hcp':
                            308)
 
     orig_image = np.abs(orim)
+
+    # =============================
+    # modify contrast
+    # =============================
+    orim_new_contrast = orig_image ** gamma
+    # orim_new_contrast = (orim_new_contrast - np.min(orig_image)) / (np.max(orig_image) - np.min(orig_image))
+    orig_image = orim_new_contrast
     
 # load pickle
 results_folder = basefolder + 'code/v2.0/results/' + dataset + '/' + subject
-recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reglambda) + '_n1_' + str(n1) +  '_n2_' + str(n2)  + '_accum_grads_norm_k_1'
+recon_suffix = 'us' + str(R) + '_sli' + str(sli) + '_regtype_' + regtype + '_reglambda_' + str(reglambda) + '_n1_' + str(n1) +  '_n2_' + str(n2)
 rec = pickle.load(open(results_folder + recon_suffix, 'rb'))
 
 # save figure
@@ -86,4 +96,4 @@ lastiter = int((np.floor(rec1.shape[-1] / 13) - 2) * 13)
 rec1 = rec1[:, :, :lastiter]
 utils.save_recon_results(np.abs(rec1), 
                          orig_image,
-                         results_folder + recon_suffix + '.tiff')
+                         results_folder + recon_suffix + '.png')

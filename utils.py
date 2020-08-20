@@ -107,3 +107,14 @@ def save_recon_results(rec,
         
     plt.savefig(savepath, bbox_inches='tight')
     plt.close()
+
+# ==========================================================
+# ==========================================================
+def save_single_image(image,
+                      savepath):
+        
+    plt.figure(figsize=[5,5])            
+    plt.imshow(image, cmap='gray')
+    plt.axis('off')
+    plt.savefig(savepath, bbox_inches='tight', dpi=50)
+    plt.close()

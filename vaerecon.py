@@ -48,7 +48,8 @@ def vaerecon(us_ksp_r2, # undersampled k space
              N4BFcorr = False,
              z_multip = 1.0,
              n1 = 5,
-             n2 = 5):
+             n2 = 5,
+             log_dir = ''):
      
      logging.info('xxxxxxxxxxxxxxxxxxx contRec is ' + contRec)
      logging.info('xxxxxxxxxxxxxxxxxxx parfact is ' + str(parfact) )
@@ -78,16 +79,18 @@ def vaerecon(us_ksp_r2, # undersampled k space
                              mode = mode,
                              chunks40 = chunks40,
                              Melmodels = Melmodels,
-                             use_normalizer = bool(n1>0))
+                             use_normalizer = bool(n1>0),
+                             log_dir = log_dir)
      
      x_rec, x_inp, funop, grd0, sess = vae_outputs[0:5]
      grd_p_x_z0, grd_p_z0, grd_q_z_x0, grd20 = vae_outputs[5:9] # these are not being used in the code now.
      y_out, y_out_prec, z_std_multip, op_q_z_x = vae_outputs[9:13] # these are not being used in the code now.
      mu, std = vae_outputs[13:15] # these are not being used in the code now.
-     grd_q_zpl_x_az0, op_q_zpl_x, z_pl = vae_outputs[15:18] # these are not being used in the code now.
-     z = vae_outputs[18:19] # these are not being used in the code now.
+     grd_q_zpl_x_az0, op_q_zpl_x, z_pl, z = vae_outputs[15:19] # these are not being used in the code now.
      # Most of these outputs were being used in the function likelihood_grad_meth3, which is no longer being used.
      norm_accum_grads_zero_op, norm_accum_grads_op, norm_accum_grads_mean_op, num_accum_steps_pl, norm_update_op, x_norm = vae_outputs[19:25]
+     f_elbo, f_data_consistency, f_total, f_summary = vae_outputs[25:29]
+     g_elbo, g_data_consistency, g_total, g_summary, summary_writer = vae_outputs[29:34]
      
      # =================================
      # used to go from image to patches and back
@@ -158,15 +161,58 @@ def vaerecon(us_ksp_r2, # undersampled k space
      # =================================
      # functions for computing the ELBO and its derivatives
      # =================================     
+     
+     # =================================     
+     # returns the elbo of a batch of patches
+     # =================================     
      def likelihood(us):
           # inp: [parfact,ps*ps]
           # out: parfact
           us = np.abs(us)
-          funeval = funop.eval(feed_dict={x_rec: np.tile(us, (nsampl,1)), z_std_multip: z_multip})
-          # funeval: [500x1]
+          funeval = funop.eval(feed_dict = {x_rec: np.tile(us, (nsampl,1)), z_std_multip: z_multip})
           funeval = np.array(np.split(funeval, nsampl, axis=0)) # [nsampl x parfact x 1]
           return np.mean(funeval, axis=0).astype(np.float64)
+      
+     # =================================    
+     # returns the elbo of the input patches
+     # =================================    
+     def likelihood_patches(ptchs):
+          # inp: [np, ps, ps] 
+          # out: 1
+          
+          fvls = np.zeros([int(np.ceil(ptchs.shape[0] / parfact) * parfact) ])
+          extraind = int(np.ceil(ptchs.shape[0] / parfact) * parfact) - ptchs.shape[0]
+          ptchs = np.pad(ptchs, [(0,extraind), (0,0), (0,0)], mode='edge')
+          
+          for ix in range(int(np.ceil(ptchs.shape[0]/parfact))):
+               fvls[parfact*ix : parfact*ix+parfact] = likelihood(np.reshape(ptchs[parfact*ix : parfact*ix+parfact,:,:], [parfact,-1]))
+               
+          fvls = fvls[0:ptchs.shape[0]]
+               
+          return np.mean(fvls)
+      
+     # =================================
+     # returns the ELBO of the image 
+     # =================================     
+     def full_funceval(image):
+          #inp: [nx*nx, 1]
+          #out: [1], [1], [1]
+          
+          tmpimg = np.reshape(image, [imsizer,imrizec])
+          
+          # how consistent is this image with the measured undersampled k-space data    
+          dc = dconst(tmpimg) 
+          
+          # convert the image into patches and measure the elbo of each patch
+          ptchs = Ptchr.im2patches(np.reshape(image, [imsizer,imrizec]))
+          ptchs = np.array(ptchs)          
+          lik = (-1)*likelihood_patches(np.abs(ptchs))    
+          
+          return lik + dc, lik, dc    
      
+     # =================================  
+     # returns the gradient of the elbo of a batch of patches wrt the batch of patches
+     # =================================  
      def likelihood_grad(us):
           # inp: [parfact, ps*ps]
           # out: [parfact, ps*ps]
@@ -178,7 +224,10 @@ def vaerecon(us_ksp_r2, # undersampled k space
           # correction for the complex image
           grd0m = usc/np.abs(usc)*grd0m
           return grd0m #.astype(np.float64)
-          
+     
+     # =================================  
+     # returns the gradient of the elbo of the input patches wrt the input patches
+     # =================================  
      def likelihood_grad_patches(ptchs):
           # inp: [np, ps, ps] 
           # out: [np, ps, ps] 
@@ -200,20 +249,6 @@ def vaerecon(us_ksp_r2, # undersampled k space
 
           return np.reshape(grds, shape_orig)
      
-     def likelihood_patches(ptchs):
-          # inp: [np, ps, ps] 
-          # out: 1
-          
-          fvls = np.zeros([int(np.ceil(ptchs.shape[0] / parfact) * parfact) ])
-          extraind = int(np.ceil(ptchs.shape[0] / parfact) * parfact) - ptchs.shape[0]
-          ptchs = np.pad(ptchs, [(0,extraind), (0,0), (0,0)], mode='edge')
-          
-          for ix in range(int(np.ceil(ptchs.shape[0]/parfact))):
-               fvls[parfact*ix : parfact*ix+parfact] = likelihood(np.reshape(ptchs[parfact*ix : parfact*ix+parfact,:,:], [parfact,-1]))
-               
-          fvls = fvls[0:ptchs.shape[0]]
-               
-          return np.mean(fvls)
 
      # =================================
      # returns the gradient of the ELBO wrt the image 
@@ -235,18 +270,6 @@ def vaerecon(us_ksp_r2, # undersampled k space
           grd_dconst = dconst_grad(np.reshape(image, [imsizer,imrizec]))
           
           return grd_lik + grd_dconst, grd_lik, grd_dconst
-     
-     def full_funceval(image):
-          #inp: [nx*nx, 1]
-          #out: [1], [1], [1]
-          
-          tmpimg = np.reshape(image, [imsizer,imrizec])
-          dc = dconst(tmpimg)     
-          ptchs = Ptchr.im2patches(np.reshape(image, [imsizer,imrizec]))
-          ptchs = np.array(ptchs)          
-          lik = (-1)*likelihood_patches(np.abs(ptchs))    
-          
-          return lik + dc, lik, dc    
      
      # =================================
      # phase projection functions
@@ -329,10 +352,12 @@ def vaerecon(us_ksp_r2, # undersampled k space
               regval = reg2eval(ims[:,:,ix+1].flatten())
               f_dc = dconst(magim*np.exp(1j*ims[:,:,ix+1])*bfestim)
               
-              logging.info("norm grad reg: " + str(np.linalg.norm(grd_reg)))
-              logging.info("norm grad dc: " + str(np.linalg.norm(grd_dc)))
-              logging.info("regval: " + str(regval))
-              logging.info("fdc: (*1e9) {0:.6f}".format(f_dc/1e9))
+              print_info = False
+              if print_info is True:
+                  logging.info("norm grad reg: " + str(np.linalg.norm(grd_reg)))
+                  logging.info("norm grad dc: " + str(np.linalg.norm(grd_dc)))
+                  logging.info("regval: " + str(regval))
+                  logging.info("fdc: (*1e9) {0:.6f}".format(f_dc/1e9))
           
           return ims[:,:,-1] #-np.pi    
      
@@ -402,7 +427,7 @@ def vaerecon(us_ksp_r2, # undersampled k space
      # initialize counters
      # ===================================== 
      numiter = num_iter
-     multip = 0 #0.1
+     multip = 0 # 0.1
      alphas = stepsize*np.ones(numiter) # np.logspace(-4,-4,numiter)
      
      # ===================================== 
@@ -483,10 +508,11 @@ def vaerecon(us_ksp_r2, # undersampled k space
                
                gtot, g_lik, g_dc = geval(recstmp) # gradient evaluation: total, wrt_vae, wrt_data_consistency
                
-               logging.info("updating normalization module...")
-               logging.info("iteration number: " + str(it+ix))
-               logging.info("f_tot= " + str(ftot) + " f_lik= " + str(f_lik) + " f_dc (1e6)= " + str(f_dc/1e6))
-               logging.info("|g_lik|= " + str(np.linalg.norm(g_lik)) + " |g_dc|= " + str(np.linalg.norm(g_dc)) )
+               logging.info("----------- updating normalization module, iteration number: " + str(it+ix))
+               f_summary_msg = sess.run(f_summary, feed_dict = {f_elbo: f_lik, f_data_consistency: f_dc/1e6, f_total: ftot})
+               summary_writer.add_summary(f_summary_msg, it+ix)
+               g_summary_msg = sess.run(g_summary, feed_dict = {g_elbo: np.linalg.norm(g_lik), g_data_consistency: np.linalg.norm(g_dc), g_total: np.linalg.norm(g_lik) + np.linalg.norm(g_dc)})
+               summary_writer.add_summary(g_summary_msg, it+ix)
 
                # recstmp will not change in this loop. Only the normalization module will.
                recs[:, it+ix+1] = recstmp.copy()
@@ -504,10 +530,11 @@ def vaerecon(us_ksp_r2, # undersampled k space
                
                gtot, g_lik, g_dc = geval(recstmp) # gradient evaluation : total, wrt_vae, wrt_data_consistency
                
-               logging.info("updating image...")
-               logging.info("iteration number: " + str(it+n1+ix))
-               logging.info("f_tot= " + str(ftot) + " f_lik= " + str(f_lik) + " f_dc (1e6)= " + str(f_dc/1e6))
-               logging.info("|g_lik|= " + str(np.linalg.norm(g_lik)) + " |g_dc|= " + str(np.linalg.norm(g_dc)) )
+               logging.info("----------- updating image, iteration number: " + str(it+n1+ix))
+               f_summary_msg = sess.run(f_summary, feed_dict = {f_elbo: f_lik, f_data_consistency: f_dc/1e6, f_total: ftot})
+               summary_writer.add_summary(f_summary_msg, it+n1+ix)
+               g_summary_msg = sess.run(g_summary, feed_dict = {g_elbo: np.linalg.norm(g_lik), g_data_consistency: np.linalg.norm(g_dc), g_total: np.linalg.norm(g_lik) + np.linalg.norm(g_dc)})
+               summary_writer.add_summary(g_summary_msg, it+n1+ix)
      
                # recstmp will change in this loop. The normalization module will stay fixed.          
                recstmp = recstmp - alpha * g_lik # g_lik
@@ -516,7 +543,12 @@ def vaerecon(us_ksp_r2, # undersampled k space
           # =============================================== 
           # Now do a  DC projection.... ACTUALLY, skip the DC projection for now.
           # ===============================================
+          logging.info("dummy step, iteration number: " + str(it+n1+n2+1))
           recs[:, it + n1 + n2 + 1] = recs[:, it + n1 + n2] 
+          f_summary_msg = sess.run(f_summary, feed_dict = {f_elbo: f_lik, f_data_consistency: f_dc/1e6, f_total: ftot})
+          summary_writer.add_summary(f_summary_msg, it+n1+n2+1)
+          g_summary_msg = sess.run(g_summary, feed_dict = {g_elbo: np.linalg.norm(g_lik), g_data_consistency: np.linalg.norm(g_dc), g_total: np.linalg.norm(g_lik) + np.linalg.norm(g_dc)})
+          summary_writer.add_summary(g_summary_msg, it+n1+n2+1)
            
           # ===============================================
           # now do a phase projection
@@ -526,10 +558,11 @@ def vaerecon(us_ksp_r2, # undersampled k space
           tmpatv = tmpa.copy().flatten()
            
           if reglmb == 0:
-               logging.info("skipping phase proj")
+               logging.info("skipping phase proj, iteration number: " + str(it+n1+n2+2))
                tmpptv = tmpp.copy().flatten()
                
           else:
+               logging.info("doing phase proj, iteration number: " + str(it+n1+n2+2))
                if regtype == 'TV': # Total variation
                     tmpptv = tv_proj(tmpp, mu=0.125,lmb=reglmb,IT=regiter).flatten() # 0.1, 15
 
@@ -557,10 +590,20 @@ def vaerecon(us_ksp_r2, # undersampled k space
           # recombine magnitude and updated phase.
           recs[:, it + n1 + n2 + 2] = tmpatv*np.exp(1j*tmpptv)
 
+          # add summary after phase projection step
+          recstmp = recs[:, it + n1 + n2 + 2].copy()        
+          ftot, f_lik, f_dc = feval(recstmp)
+          gtot, g_lik, g_dc = geval(recstmp)
+          f_summary_msg = sess.run(f_summary, feed_dict = {f_elbo: f_lik, f_data_consistency: f_dc/1e6, f_total: ftot})
+          summary_writer.add_summary(f_summary_msg, it+n1+n2+2)
+          g_summary_msg = sess.run(g_summary, feed_dict = {g_elbo: np.linalg.norm(g_lik), g_data_consistency: np.linalg.norm(g_dc), g_total: np.linalg.norm(g_lik) + np.linalg.norm(g_dc)})
+          summary_writer.add_summary(g_summary_msg, it+n1+n2+2)
+
           # ===============================================      
           # now do a data consistency projection
           # take the measured part of the k space from the measured data and the remaining part of the k space from the updated image.
           # ===============================================
+          logging.info("doing data consistency step, iteration number: " + str(it+n1+n2+3))
           if not N4BFcorr:  
                tmp1 = utils.UFT_with_sensmaps(np.reshape(recs[:, it + n1 + n2 + 2], [imsizer,imrizec]), (1-uspat), sensmaps)
                tmp2 = utils.UFT_with_sensmaps(np.reshape(recs[:, it + n1 + n2 + 2], [imsizer,imrizec]), (uspat), sensmaps)
@@ -569,8 +612,8 @@ def vaerecon(us_ksp_r2, # undersampled k space
                tmp = tmp1 + multip * tmp2 + (1 - multip) * tmp3
                recs[:, it + n1 + n2 + 3] = utils.tFT_with_sensmaps(tmp, sensmaps).flatten()
                
-               ftot, f_lik, f_dc = feval(recs[:, it + n1 + n2 + 3])
-               logging.info('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc/np.linalg.norm(data)**2))
+               # ftot, f_lik, f_dc = feval(recs[:, it + n1 + n2 + 3])
+               # logging.info('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc/np.linalg.norm(data)**2))
                
           elif N4BFcorr:               
                
@@ -591,11 +634,18 @@ def vaerecon(us_ksp_r2, # undersampled k space
                tmp = tmp1 + (1 - multip) * tmp3 # multip=0 by default
                recs[:, it + n1 + n2 + 3] = (utils.tFT_with_sensmaps(tmp, sensmaps) / n4bf).flatten()
                
-               ftot, f_lik, f_dc = feval(recs[:, it + n1 + n2 + 3])
-
-               if N4BFcorr:
-                     f_dc = dconst(recs[:, it + n1 + n2 + 3].reshape([imsizer,imrizec])*n4bf)
+               # ftot, f_lik, f_dc = feval(recs[:, it + n1 + n2 + 3])
+               # if N4BFcorr: f_dc = dconst(recs[:, it + n1 + n2 + 3].reshape([imsizer,imrizec])*n4bf)               
+               # logging.info('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc / np.linalg.norm(data) ** 2))
                
-               logging.info('f_dc (1e6): ' + str(f_dc/1e6) + '  perc: ' + str(100*f_dc / np.linalg.norm(data) ** 2))
+          # add summary after data consistency step
+          recstmp = recs[:, it + n1 + n2 + 3].copy()        
+          ftot, f_lik, f_dc = feval(recstmp)
+          gtot, g_lik, g_dc = geval(recstmp)
+          f_summary_msg = sess.run(f_summary, feed_dict = {f_elbo: f_lik, f_data_consistency: f_dc/1e6, f_total: ftot})
+          summary_writer.add_summary(f_summary_msg, it+n1+n2+3)
+          g_summary_msg = sess.run(g_summary, feed_dict = {g_elbo: np.linalg.norm(g_lik), g_data_consistency: np.linalg.norm(g_dc), g_total: np.linalg.norm(g_lik) + np.linalg.norm(g_dc)})
+          summary_writer.add_summary(g_summary_msg, it+n1+n2+3)
+          summary_writer.flush()
               
      return recs, 0, phaseregvals, n4biasfields
